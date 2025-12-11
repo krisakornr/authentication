@@ -20,12 +20,15 @@ const K_SDM_HEX = "AD".repeat(16);
 // You can customize per product easily here.
 const PRODUCT_ROUTES: Record<string, { valid: string; invalid: string }> = {
   "0001": {
-    valid: "https://d.atma.to/pharmademo/PCJW8NWE63",
+    //valid: "https://d.atma.to/pharmademo/PCJW8NWE63",
+    valid: "https://mm.group/",
+    //invalid: "https://d.atma.to/pharmademo/GVDM4H9JE8",
     invalid: "https://d.atma.to/pharmademo/GVDM4H9JE8",
   },
   "0002": {
-    valid: "https://d.atma.to/pharmademo/PCJW8NWE63", // change if you want separate URLs
-    invalid: "https://d.atma.to/pharmademo/GVDM4H9JE8",
+    //valid: "https://d.atma.to/pharmademo/BNCV8A4QZX", // change if you want separate URLs
+    valid: "https://mm.group/packaging/products/shaped-cartons/", // change if you want separate URLs
+    invalid: "https://d.atma.to/pharmademo/QNCM49HTNV",
   },
 };
 
