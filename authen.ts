@@ -365,10 +365,40 @@ serve(async (req) => {
       if (replayInfo.reason) body.replay_reason = replayInfo.reason;
     }
 
-    return new Response(JSON.stringify(body, null, 2), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
+    const jsonPretty = JSON.stringify(body, null, 2);
+
+const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>AD Authentication JSON</title>
+  <style>
+    body {
+      background: #ffffff;
+      font-family: Consolas, Monaco, monospace;
+      padding: 20px;
+    }
+    pre {
+      font-size: 22px;   /* << Increase font size here */
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      color: #111;
+    }
+  </style>
+</head>
+<body>
+  <pre>${jsonPretty}</pre>
+</body>
+</html>
+`;
+
+return new Response(html, {
+  status: 200,
+  headers: { "content-type": "text/html" },
+});
+
   } catch (err) {
     if (MODE === "redirect") {
       return Response.redirect(routes.invalid, 302);
