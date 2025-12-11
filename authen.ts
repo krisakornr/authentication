@@ -4,7 +4,7 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 // Configuration
 // -----------------------------------------------------------------------------
 
-const API_VERSION = "sun-424-v4";
+const API_VERSION = "sun-424-v5";
 
 // SDMFileReadKey (Key0) – 16 bytes, AD repeated 16 times
 const K_SDM_HEX = "AD".repeat(16);
@@ -54,7 +54,7 @@ function leftShiftOneBit(input: Uint8Array): Uint8Array {
   return out;
 }
 
-// Generate CMAC subkeys K1, K2 (NIST SP 800-38B), using AES-128 cipher core
+// Generate CMAC subkeys K1, K2 (NIST SP 800-38B) using AES-128 cipher core
 async function generateSubkeys(keyBytes: Uint8Array): Promise<{
   K1: Uint8Array;
   K2: Uint8Array;
@@ -98,7 +98,7 @@ async function generateSubkeys(keyBytes: Uint8Array): Promise<{
 }
 
 // AES-128-CMAC using WebCrypto AES-CBC as core.
-// IMPORTANT FIX: zero-length message is treated as an INCOMPLETE block with 0x80 padding.
+// Important: zero-length message is treated as an INCOMPLETE block with 0x80 padding.
 async function aesCmac(keyBytes: Uint8Array, message: Uint8Array): Promise<Uint8Array> {
   const { K1, K2 } = await generateSubkeys(keyBytes);
 
@@ -120,7 +120,7 @@ async function aesCmac(keyBytes: Uint8Array, message: Uint8Array): Promise<Uint8
   let lastBlock = new Uint8Array(blockSize);
 
   if (message.length === 0) {
-    // Zero-length: treat as incomplete block with padding 0x80 00..00, then XOR with K2
+    // Zero-length: treat as incomplete block "0x80 00..00", then XOR with K2
     const padded = new Uint8Array(blockSize);
     padded[0] = 0x80;
     lastBlock = xorBlock(padded, K2);
@@ -169,7 +169,7 @@ async function aesCmac(keyBytes: Uint8Array, message: Uint8Array): Promise<Uint8
   return encLast.slice(0, blockSize); // full 16-byte CMAC
 }
 
-// Truncate CMAC to 8 bytes (16 hex chars) – correct for your config:
+// Truncate CMAC to 8 bytes (16 hex chars):
 // take S1, S3, S5, S7, S9, S11, S13, S15 (odd indices, in order).
 function truncateMac(cmacFull: Uint8Array): string {
   if (cmacFull.length !== 16) {
@@ -187,13 +187,15 @@ function truncateMac(cmacFull: Uint8Array): string {
 
 // Build SV2 for Session MAC key:
 // SV2 = 3CC3 0001 0080 [UID (7B MSB)] [SDMReadCtr (3B LSB)]
-function buildSV2(uid: Uint8Array, cntDec: string): Uint8Array {
+// Here cntHex is a 6-hex-digit string: "000001", "00000A", etc.
+function buildSV2(uid: Uint8Array, cntHex: string): Uint8Array {
   if (uid.length !== 7) {
     throw new Error("UID must be 7 bytes");
   }
+
   const ctrInt = parseInt(cntHex, 16);
   if (!Number.isFinite(ctrInt) || ctrInt < 0 || ctrInt > 0xFFFFFF) {
-    throw new Error("Counter out of range (0..16777215)");
+    throw new Error("Counter out of range (hex 000000..FFFFFF)");
   }
 
   const ctr = new Uint8Array(3);
@@ -204,23 +206,25 @@ function buildSV2(uid: Uint8Array, cntDec: string): Uint8Array {
 
   const sv2 = new Uint8Array(16);
   sv2.set([0x3C, 0xC3, 0x00, 0x01, 0x00, 0x80], 0); // 6 bytes
-  sv2.set(uid, 6);          // 7 bytes → positions 6..12
-  sv2.set(ctr, 13);         // 3 bytes → positions 13..15
+  sv2.set(uid, 6);          // UID (7 bytes) → positions 6..12
+  sv2.set(ctr, 13);         // Counter (3 bytes) → positions 13..15
 
   return sv2;
 }
 
 // Compute expected SUN / SDMMAC for given id & cnt
-async function computeExpectedSig(idHex: string, cnt: string): Promise<string> {
+// idHex: 14 hex chars (7-byte UID MSB)
+// cntHex: 6 hex chars (e.g. "000001", "00000A")
+async function computeExpectedSig(idHex: string, cntHex: string): Promise<string> {
   if (!/^[0-9A-Fa-f]{14}$/.test(idHex)) {
     throw new Error("id must be 14 hex characters (7-byte UID).");
   }
-  if (!/^\d{6}$/.test(cnt)) {
-    throw new Error("cnt must be a 6-digit decimal string, e.g. 000001.");
+  if (!/^[0-9A-Fa-f]{6}$/.test(cntHex)) {
+    throw new Error("cnt must be 6 hex characters (e.g. 000001, 00000A).");
   }
 
   const uid = hexToBytes(idHex);
-  const sv2 = buildSV2(uid, cnt);
+  const sv2 = buildSV2(uid, cntHex);
   const K_SDM = hexToBytes(K_SDM_HEX);
 
   // 1) Session MAC key: KSesSDMFileReadMAC = CMAC(KSDMFileRead; SV2)
@@ -245,7 +249,7 @@ serve(async (req) => {
 
   if (!id || !cnt || !sig) {
     return new Response(
-      `Missing parameters. Expected: ?id=<14-hex>&cnt=<000001>&sig=<16-hex> (version: ${API_VERSION})`,
+      `Missing parameters. Expected: ?id=<14hex>&cnt=<000001hex>&sig=<16hex> (version: ${API_VERSION})`,
       { status: 400 },
     );
   }
