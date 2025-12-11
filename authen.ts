@@ -191,7 +191,7 @@ function buildSV2(uid: Uint8Array, cntDec: string): Uint8Array {
   if (uid.length !== 7) {
     throw new Error("UID must be 7 bytes");
   }
-  const ctrInt = parseInt(cntDec, 10);
+  const ctrInt = parseInt(cntHex, 16);
   if (!Number.isFinite(ctrInt) || ctrInt < 0 || ctrInt > 0xFFFFFF) {
     throw new Error("Counter out of range (0..16777215)");
   }
