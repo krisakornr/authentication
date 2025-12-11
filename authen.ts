@@ -4,10 +4,18 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 // Configuration
 // -----------------------------------------------------------------------------
 
-const API_VERSION = "sun-424-v5";
+// MODE: "json" → return JSON validation result
+//       "redirect" → HTTP redirect to valid/invalid URLs below
+const MODE: "json" | "redirect" = "redirect"; // change to "redirect" when needed
+
+const API_VERSION = "sun-424-v6";
 
 // SDMFileReadKey (Key0) – 16 bytes, AD repeated 16 times
 const K_SDM_HEX = "AD".repeat(16);
+
+// Redirect targets (used only when MODE === "redirect")
+const VALID_REDIRECT_URL = "https://d.atma.to/pharmademo/PCJW8NWE63";
+const INVALID_REDIRECT_URL = "https://d.atma.to/pharmademo/GVDM4H9JE8";
 
 // -----------------------------------------------------------------------------
 // Helper functions
@@ -98,7 +106,7 @@ async function generateSubkeys(keyBytes: Uint8Array): Promise<{
 }
 
 // AES-128-CMAC using WebCrypto AES-CBC as core.
-// Important: zero-length message is treated as an INCOMPLETE block with 0x80 padding.
+// Zero-length message is treated as an INCOMPLETE block with 0x80 padding.
 async function aesCmac(keyBytes: Uint8Array, message: Uint8Array): Promise<Uint8Array> {
   const { K1, K2 } = await generateSubkeys(keyBytes);
 
@@ -187,7 +195,7 @@ function truncateMac(cmacFull: Uint8Array): string {
 
 // Build SV2 for Session MAC key:
 // SV2 = 3CC3 0001 0080 [UID (7B MSB)] [SDMReadCtr (3B LSB)]
-// Here cntHex is a 6-hex-digit string: "000001", "00000A", etc.
+// cntHex is a 6-hex-digit string: "000001", "00000A", etc.
 function buildSV2(uid: Uint8Array, cntHex: string): Uint8Array {
   if (uid.length !== 7) {
     throw new Error("UID must be 7 bytes");
@@ -227,13 +235,8 @@ async function computeExpectedSig(idHex: string, cntHex: string): Promise<string
   const sv2 = buildSV2(uid, cntHex);
   const K_SDM = hexToBytes(K_SDM_HEX);
 
-  // 1) Session MAC key: KSesSDMFileReadMAC = CMAC(KSDMFileRead; SV2)
   const kSesMac = await aesCmac(K_SDM, sv2);
-
-  // 2) CMAC over zero-length input using KSesSDMFileReadMAC
   const cmacFull = await aesCmac(kSesMac, new Uint8Array([]));
-
-  // 3) Truncate to 8 bytes (16 hex chars)
   return truncateMac(cmacFull);
 }
 
@@ -248,16 +251,25 @@ serve(async (req) => {
   const sig = (url.searchParams.get("sig") ?? "").toUpperCase();
 
   if (!id || !cnt || !sig) {
-    return new Response(
-      `Missing parameters. Expected: ?id=<14hex>&cnt=<000001hex>&sig=<16hex> (version: ${API_VERSION})`,
-      { status: 400 },
-    );
+    const msg = `Missing parameters. Expected: ?id=<14hex>&cnt=<000001hex>&sig=<16hex> (version: ${API_VERSION})`;
+    if (MODE === "redirect") {
+      // For missing params, treat as invalid and redirect to INVALID page
+      return Response.redirect(INVALID_REDIRECT_URL, 302);
+    }
+    return new Response(msg, { status: 400 });
   }
 
   try {
     const expected = await computeExpectedSig(id, cnt);
     const valid = expected === sig;
 
+    if (MODE === "redirect") {
+      // Redirect mode: send user to valid / invalid landing page
+      const target = valid ? VALID_REDIRECT_URL : INVALID_REDIRECT_URL;
+      return Response.redirect(target, 302);
+    }
+
+    // JSON mode: return detailed validation result
     const body = {
       version: API_VERSION,
       valid,
@@ -271,7 +283,12 @@ serve(async (req) => {
       status: 200,
       headers: { "content-type": "application/json" },
     });
+
   } catch (err) {
+    if (MODE === "redirect") {
+      // On errors, also go to invalid page
+      return Response.redirect(INVALID_REDIRECT_URL, 302);
+    }
     return new Response(
       `Error (${API_VERSION}): ${(err as Error).message}`,
       { status: 400 },
