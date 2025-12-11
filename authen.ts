@@ -4,6 +4,8 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 // Configuration
 // -----------------------------------------------------------------------------
 
+const API_VERSION = "sun-424-v3";
+
 // SDMFileReadKey (Key0) – 16 bytes, AD repeated 16 times
 const K_SDM_HEX = "AD".repeat(16);
 
@@ -180,7 +182,7 @@ function truncateMac(cmacFull: Uint8Array): string {
   return bytesToHex(out);
 }
 
-// Build SV2 for Session MAC key, per AN12196:
+// Build SV2 for Session MAC key:
 // SV2 = 3CC3 0001 0080 [UID (7B MSB)] [SDMReadCtr (3B LSB)]
 function buildSV2(uid: Uint8Array, cntDec: string): Uint8Array {
   if (uid.length !== 7) {
@@ -206,8 +208,6 @@ function buildSV2(uid: Uint8Array, cntDec: string): Uint8Array {
 }
 
 // Compute expected SUN / SDMMAC for given id & cnt
-// idHex: 14 hex chars (7-byte UID MSB)
-// cnt:   6-digit decimal string (e.g. "000001")
 async function computeExpectedSig(idHex: string, cnt: string): Promise<string> {
   if (!/^[0-9A-Fa-f]{14}$/.test(idHex)) {
     throw new Error("id must be 14 hex characters (7-byte UID).");
@@ -242,7 +242,7 @@ serve(async (req) => {
 
   if (!id || !cnt || !sig) {
     return new Response(
-      "Missing parameters. Expected: ?id=<14-hex>&cnt=<000001>&sig=<16-hex>",
+      `Missing parameters. Expected: ?id=<14-hex>&cnt=<000001>&sig=<16-hex> (version: ${API_VERSION})`,
       { status: 400 },
     );
   }
@@ -252,6 +252,7 @@ serve(async (req) => {
     const valid = expected === sig;
 
     const body = {
+      version: API_VERSION,
       valid,
       id,
       cnt,
@@ -264,6 +265,9 @@ serve(async (req) => {
       headers: { "content-type": "application/json" },
     });
   } catch (err) {
-    return new Response(`Error: ${(err as Error).message}`, { status: 400 });
+    return new Response(
+      `Error (${API_VERSION}): ${(err as Error).message}`,
+      { status: 400 },
+    );
   }
 });
