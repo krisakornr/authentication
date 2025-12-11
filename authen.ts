@@ -1,9 +1,9 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 
-// 32-hex-char key (16 bytes) -> "AD" repeated 16 times
-const KEY_HEX = "00".repeat(16); // "ADADAD...AD" (32 chars)
+// 16-byte AES-128 key as hex string: "AD" repeated 16 times (32 hex chars)
+const KEY_HEX = "AD".repeat(16); // ADADAD...AD (32 chars)
 
-// --- Helpers ---
+// ---------- Helpers ----------
 
 function hexToBytes(hex: string): Uint8Array {
   if (hex.length % 2 !== 0) {
@@ -22,20 +22,30 @@ function bytesToHex(bytes: Uint8Array): string {
     .join("");
 }
 
-// Encrypt 6-char counter using AES-128-CBC with zero IV,
-// return first 16 hex chars of ciphertext.
-async function encryptCounter(counter: string): Promise<string> {
-  // Validate counter: exactly 6 digits
-  if (!/^\d{6}$/.test(counter)) {
-    throw new Error("Counter must be a 6-digit numeric string, e.g. 000001");
+// Build a 16-byte block from id + cnt (simplified scheme):
+// plaintext = ASCII(id + cnt) truncated or zero-padded to 16 bytes.
+function buildPlaintextBlock(id: string, cnt: string): Uint8Array {
+  const text = id + cnt; // e.g. "0400AABBCCDD000001"
+  const enc = new TextEncoder().encode(text);
+  const block = new Uint8Array(16);
+  block.fill(0);
+  block.set(enc.slice(0, 16), 0);
+  return block;
+}
+
+// Compute simplified "SUN" signature: AES-128-CBC with zero IV over block(id+cnt),
+// then take first 16 hex chars of ciphertext.
+async function computeSignature(id: string, cnt: string): Promise<string> {
+  // Basic format validation
+  if (!/^[0-9a-fA-F]{14}$/.test(id)) {
+    throw new Error("id must be 14 hex characters (7-byte UID).");
+  }
+  if (!/^\d{6}$/.test(cnt)) {
+    throw new Error("cnt must be a 6-digit decimal string (e.g. 000001).");
   }
 
-  // Prepare 16-byte block: ASCII(counter) + zero padding
-  const block = new Uint8Array(16);
-  const enc = new TextEncoder().encode(counter); // 6 bytes
-  block.set(enc, 0); // pad rest with zeros
+  const block = buildPlaintextBlock(id, cnt);
 
-  // Import AES-128 key
   const keyBytes = hexToBytes(KEY_HEX); // 16 bytes
   const cryptoKey = await crypto.subtle.importKey(
     "raw",
@@ -45,7 +55,7 @@ async function encryptCounter(counter: string): Promise<string> {
     ["encrypt"],
   );
 
-  // Fixed IV (16 zero bytes) – deterministic encryption
+  // Zero IV for deterministic output (NOT secure, demo only)
   const iv = new Uint8Array(16);
 
   const ciphertextBuf = await crypto.subtle.encrypt(
@@ -57,33 +67,72 @@ async function encryptCounter(counter: string): Promise<string> {
   const ciphertext = new Uint8Array(ciphertextBuf);
   const fullHex = bytesToHex(ciphertext);
 
-  // Return first 16 hex chars (8 bytes)
-  return fullHex.slice(0, 16);
+  // Return first 16 hex chars as sig
+  return fullHex.slice(0, 16).toUpperCase();
 }
 
-// --- HTTP handler ---
+// ---------- HTTP Handler ----------
 
 serve(async (req) => {
   const url = new URL(req.url);
-  // Query parameter name: "c" (you can change this)
-  const counter = url.searchParams.get("c");
+  const id = url.searchParams.get("id");
+  const cnt = url.searchParams.get("cnt");
+  const sig = url.searchParams.get("sig");
 
-  if (!counter) {
+  console.log(`Incoming request: ${req.url}`);
+  console.log(`id=${id}, cnt=${cnt}, sig=${sig}`);
+
+  if (!id || !cnt || !sig) {
     return new Response(
-      "Missing query parameter 'c' (6-digit counter, e.g. ?c=000001)",
+      "Missing query parameters. Expected: ?id=<14-hex>&cnt=<000001>&sig=<16-hex>",
       { status: 400 },
     );
   }
 
-  try {
-    const token = await encryptCounter(counter);
-    // Plain-text response containing the 16-char token
-    return new Response(token, {
-      status: 200,
-      headers: { "content-type": "text/plain" },
+  // Normalize signature to uppercase for comparison
+  const sigNorm = sig.toUpperCase();
+
+  // Basic format checks
+  if (!/^[0-9a-fA-F]{14}$/.test(id)) {
+    return new Response("Invalid id format (must be 14 hex chars).", {
+      status: 400,
     });
+  }
+  if (!/^\d{6}$/.test(cnt)) {
+    return new Response("Invalid cnt format (must be 6 digits).", {
+      status: 400,
+    });
+  }
+  if (!/^[0-9A-F]{16}$/.test(sigNorm)) {
+    return new Response("Invalid sig format (must be 16 hex chars).", {
+      status: 400,
+    });
+  }
+
+  try {
+    const expectedSig = await computeSignature(id, cnt);
+    console.log(`Expected sig=${expectedSig}`);
+
+    if (expectedSig === sigNorm) {
+      // OK – signature matches
+      return new Response(
+        JSON.stringify({ valid: true, id, cnt, sig: sigNorm }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    } else {
+      // Mismatch
+      return new Response(
+        JSON.stringify({
+          valid: false,
+          reason: "Signature mismatch",
+          expected: expectedSig,
+          received: sigNorm,
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      );
+    }
   } catch (err) {
-    console.error("Encryption error:", err);
+    console.error("Error during validation:", err);
     return new Response(`Error: ${err.message}`, { status: 400 });
   }
 });
