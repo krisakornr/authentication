@@ -377,10 +377,10 @@ const html = `
     body {
       background: #ffffff;
       font-family: Consolas, Monaco, monospace;
-      padding: 20px;
+      padding: 30px;
     }
     pre {
-      font-size: 22px;   /* << Increase font size here */
+      font-size: 32px;   /* << Increase font size here */
       line-height: 1.5;
       white-space: pre-wrap;
       word-wrap: break-word;
