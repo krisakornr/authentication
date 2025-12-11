@@ -15,7 +15,8 @@ const K_SDM_HEX = "AD".repeat(16);
 
 // Redirect targets (used only when MODE === "redirect")
 const VALID_REDIRECT_URL = "https://d.atma.to/pharmademo/PCJW8NWE63";
-const INVALID_REDIRECT_URL = "https://d.atma.to/pharmademo/GVDM4H9JE8";
+//const INVALID_REDIRECT_URL = "https://d.atma.to/pharmademo/GVDM4H9JE8";
+const INVALID_REDIRECT_URL = "https://google.com";
 
 // -----------------------------------------------------------------------------
 // Helper functions
