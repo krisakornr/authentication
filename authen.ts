@@ -4,7 +4,7 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 // Configuration
 // -----------------------------------------------------------------------------
 
-const API_VERSION = "sun-424-v3";
+const API_VERSION = "sun-424-v4";
 
 // SDMFileReadKey (Key0) – 16 bytes, AD repeated 16 times
 const K_SDM_HEX = "AD".repeat(16);
@@ -98,6 +98,7 @@ async function generateSubkeys(keyBytes: Uint8Array): Promise<{
 }
 
 // AES-128-CMAC using WebCrypto AES-CBC as core.
+// IMPORTANT FIX: zero-length message is treated as an INCOMPLETE block with 0x80 padding.
 async function aesCmac(keyBytes: Uint8Array, message: Uint8Array): Promise<Uint8Array> {
   const { K1, K2 } = await generateSubkeys(keyBytes);
 
@@ -119,8 +120,10 @@ async function aesCmac(keyBytes: Uint8Array, message: Uint8Array): Promise<Uint8
   let lastBlock = new Uint8Array(blockSize);
 
   if (message.length === 0) {
-    // Zero-length message: M1* = 0^128, then XOR with K2
-    lastBlock = xorBlock(lastBlock, K2);
+    // Zero-length: treat as incomplete block with padding 0x80 00..00, then XOR with K2
+    const padded = new Uint8Array(blockSize);
+    padded[0] = 0x80;
+    lastBlock = xorBlock(padded, K2);
   } else {
     const start = (n - 1) * blockSize;
     const end = message.length;
