@@ -5,18 +5,42 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 // -----------------------------------------------------------------------------
 
 // MODE: "json" → return JSON validation result
-//       "redirect" → HTTP redirect to valid/invalid URLs below
-const MODE: "json" | "redirect" = "redirect"; // change to "redirect" when needed
+//       "redirect" → HTTP redirect to valid/invalid URLs per product
+const MODE: "json" | "redirect" = "json"; // change to "redirect" for demo
 
-const API_VERSION = "sun-424-v6";
+// Enable / disable replay protection
+const REPLAY_PROTECTION = true;
+
+const API_VERSION = "sun-424-v7";
 
 // SDMFileReadKey (Key0) – 16 bytes, AD repeated 16 times
 const K_SDM_HEX = "AD".repeat(16);
 
-// Redirect targets (used only when MODE === "redirect")
-const VALID_REDIRECT_URL = "https://d.atma.to/pharmademo/PCJW8NWE63";
-//const INVALID_REDIRECT_URL = "https://d.atma.to/pharmademo/GVDM4H9JE8";
-const INVALID_REDIRECT_URL = "https://google.com";
+// Per-product redirect routes (used only when MODE === "redirect")
+// You can customize per product easily here.
+const PRODUCT_ROUTES: Record<string, { valid: string; invalid: string }> = {
+  "0001": {
+    valid: "https://d.atma.to/pharmademo/PCJW8NWE63",
+    invalid: "https://d.atma.to/pharmademo/GVDM4H9JE8",
+  },
+  "0002": {
+    valid: "https://d.atma.to/pharmademo/PCJW8NWE63", // change if you want separate URLs
+    invalid: "https://d.atma.to/pharmademo/GVDM4H9JE8",
+  },
+};
+
+// Fallback redirect if prod not recognized
+const DEFAULT_ROUTES = {
+  valid: "https://d.atma.to/pharmademo/PCJW8NWE63",
+  invalid: "https://d.atma.to/pharmademo/GVDM4H9JE8",
+};
+
+// -----------------------------------------------------------------------------
+// Deno KV for replay protection
+// -----------------------------------------------------------------------------
+
+// Key format in KV: ["sun424", "prod", prod, "uid", id] → lastCounter (number)
+const kv = await Deno.openKv();
 
 // -----------------------------------------------------------------------------
 // Helper functions
@@ -241,54 +265,113 @@ async function computeExpectedSig(idHex: string, cntHex: string): Promise<string
   return truncateMac(cmacFull);
 }
 
+// Replay protection: ensure counter is strictly increasing per (prod, id)
+async function checkAndUpdateCounter(
+  prod: string,
+  id: string,
+  cntHex: string,
+): Promise<{ ok: boolean; reason?: string; last?: number; current?: number }> {
+  if (!REPLAY_PROTECTION) {
+    return { ok: true };
+  }
+
+  const key = ["sun424", "prod", prod, "uid", id];
+  const entry = await kv.get<number>(key);
+  const current = parseInt(cntHex, 16);
+
+  if (entry.value === null || entry.value === undefined) {
+    // First time we see this tag for this product
+    await kv.set(key, current);
+    return { ok: true, current };
+  }
+
+  const last = entry.value;
+
+  if (current <= last) {
+    // Replay (equal) or rollback (lower)
+    return { ok: false, reason: "replay_or_rollback", last, current };
+  }
+
+  // Monotonic increase – accept and update
+  await kv.set(key, current);
+  return { ok: true, last, current };
+}
+
+// Resolve product routes
+function getRoutesForProd(prod: string | null): { valid: string; invalid: string } {
+  if (!prod) return DEFAULT_ROUTES;
+  return PRODUCT_ROUTES[prod] ?? DEFAULT_ROUTES;
+}
+
 // -----------------------------------------------------------------------------
 // HTTP handler
 // -----------------------------------------------------------------------------
 
 serve(async (req) => {
   const url = new URL(req.url);
+  const prod = url.searchParams.get("prod"); // may be null
   const id = url.searchParams.get("id") ?? "";
   const cnt = url.searchParams.get("cnt") ?? "";
   const sig = (url.searchParams.get("sig") ?? "").toUpperCase();
 
+  const routes = getRoutesForProd(prod);
+
   if (!id || !cnt || !sig) {
-    const msg = `Missing parameters. Expected: ?id=<14hex>&cnt=<000001hex>&sig=<16hex> (version: ${API_VERSION})`;
+    const msg =
+      `Missing parameters. Expected: ?prod=<0001>&id=<14hex>&cnt=<000001hex>&sig=<16hex> (version: ${API_VERSION})`;
     if (MODE === "redirect") {
-      // For missing params, treat as invalid and redirect to INVALID page
-      return Response.redirect(INVALID_REDIRECT_URL, 302);
+      return Response.redirect(routes.invalid, 302);
     }
     return new Response(msg, { status: 400 });
   }
 
   try {
     const expected = await computeExpectedSig(id, cnt);
-    const valid = expected === sig;
+    const sigValid = expected === sig;
+
+    let replayOk = true;
+    let replayInfo: { reason?: string; last?: number; current?: number } = {};
+
+    if (sigValid) {
+      replayInfo = await checkAndUpdateCounter(prod ?? "default", id, cnt);
+      replayOk = replayInfo.ok;
+    }
+
+    const valid = sigValid && replayOk;
 
     if (MODE === "redirect") {
-      // Redirect mode: send user to valid / invalid landing page
-      const target = valid ? VALID_REDIRECT_URL : INVALID_REDIRECT_URL;
+      const target = valid ? routes.valid : routes.invalid;
       return Response.redirect(target, 302);
     }
 
-    // JSON mode: return detailed validation result
-    const body = {
+    // JSON mode
+    const body: Record<string, unknown> = {
       version: API_VERSION,
+      mode: MODE,
+      replay_protection: REPLAY_PROTECTION,
       valid,
+      sigValid,
+      prod: prod ?? "default",
       id,
       cnt,
       expected,
       received: sig,
     };
 
+    if (REPLAY_PROTECTION && sigValid) {
+      body.replay_ok = replayOk;
+      if (replayInfo.last !== undefined) body.last_counter = replayInfo.last;
+      if (replayInfo.current !== undefined) body.current_counter = replayInfo.current;
+      if (replayInfo.reason) body.replay_reason = replayInfo.reason;
+    }
+
     return new Response(JSON.stringify(body, null, 2), {
       status: 200,
       headers: { "content-type": "application/json" },
     });
-
   } catch (err) {
     if (MODE === "redirect") {
-      // On errors, also go to invalid page
-      return Response.redirect(INVALID_REDIRECT_URL, 302);
+      return Response.redirect(routes.invalid, 302);
     }
     return new Response(
       `Error (${API_VERSION}): ${(err as Error).message}`,
