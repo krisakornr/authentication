@@ -4,8 +4,7 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 // Configuration
 // -----------------------------------------------------------------------------
 
-// SDMFileReadKey (16 bytes) – you said it is AD repeated 16 times
-// Hex representation: "ADADAD...AD" (32 hex chars)
+// SDMFileReadKey (Key0) – 16 bytes, AD repeated 16 times
 const K_SDM_HEX = "AD".repeat(16);
 
 // -----------------------------------------------------------------------------
@@ -77,9 +76,8 @@ async function generateSubkeys(keyBytes: Uint8Array): Promise<{
     ) as ArrayBuffer,
   );
 
-  // First 16 bytes are AES-ECB(K, 0^128) since IV=0 and only one block
+  // First 16 bytes are effectively AES-ECB(K, 0^128)
   const L = enc.slice(0, 16);
-
   const Rb = 0x87;
 
   // K1
@@ -97,8 +95,7 @@ async function generateSubkeys(keyBytes: Uint8Array): Promise<{
   return { K1, K2 };
 }
 
-// AES-128-CMAC using WebCrypto AES-CBC as the underlying block cipher.
-// Supports arbitrary message length (0 or more bytes).
+// AES-128-CMAC using WebCrypto AES-CBC as core.
 async function aesCmac(keyBytes: Uint8Array, message: Uint8Array): Promise<Uint8Array> {
   const { K1, K2 } = await generateSubkeys(keyBytes);
 
@@ -120,7 +117,7 @@ async function aesCmac(keyBytes: Uint8Array, message: Uint8Array): Promise<Uint8
   let lastBlock = new Uint8Array(blockSize);
 
   if (message.length === 0) {
-    // Zero-length message: M1* = 0^128, use K2
+    // Zero-length message: M1* = 0^128, then XOR with K2
     lastBlock = xorBlock(lastBlock, K2);
   } else {
     const start = (n - 1) * blockSize;
@@ -128,14 +125,11 @@ async function aesCmac(keyBytes: Uint8Array, message: Uint8Array): Promise<Uint8
     const M_last = message.slice(start, end);
 
     if (isComplete) {
-      // Complete last block → XOR with K1
       lastBlock = xorBlock(M_last, K1);
     } else {
-      // Incomplete last block → pad, then XOR with K2
       const padded = new Uint8Array(blockSize);
       padded.set(M_last, 0);
       padded[M_last.length] = 0x80;
-      // rest already zeros
       lastBlock = xorBlock(padded, K2);
     }
   }
@@ -143,7 +137,6 @@ async function aesCmac(keyBytes: Uint8Array, message: Uint8Array): Promise<Uint8
   let X = new Uint8Array(blockSize); // X_0 = 0^128
   const ivZero = new Uint8Array(blockSize);
 
-  // Process all blocks except the last one
   const numFullBlocks = message.length === 0 ? 0 : (n - 1);
   for (let i = 0; i < numFullBlocks; i++) {
     const block = message.slice(i * blockSize, (i + 1) * blockSize);
@@ -159,7 +152,6 @@ async function aesCmac(keyBytes: Uint8Array, message: Uint8Array): Promise<Uint8
     X = enc.slice(0, blockSize);
   }
 
-  // Final block
   const Y_last = xorBlock(X, lastBlock);
   const encLast = new Uint8Array(
     await crypto.subtle.encrypt(
@@ -168,13 +160,12 @@ async function aesCmac(keyBytes: Uint8Array, message: Uint8Array): Promise<Uint8
       Y_last,
     ) as ArrayBuffer,
   );
-  const T = encLast.slice(0, blockSize); // full 16-byte CMAC
 
-  return T;
+  return encLast.slice(0, blockSize); // full 16-byte CMAC
 }
 
-// Truncate CMAC to 8 bytes (16 hex chars) as per NXP MFCMAC example:
-// Take every odd-indexed byte from CMAC (S1, S3, ..., S15) in MSB-first order.
+// Truncate CMAC to 8 bytes (16 hex chars) – correct for your config:
+// take S1, S3, S5, S7, S9, S11, S13, S15 (odd indices, in order).
 function truncateMac(cmacFull: Uint8Array): string {
   if (cmacFull.length !== 16) {
     throw new Error("CMAC must be 16 bytes");
@@ -189,7 +180,7 @@ function truncateMac(cmacFull: Uint8Array): string {
   return bytesToHex(out);
 }
 
-// Build SV2 for Session MAC key, according to AN12196 Table 2:
+// Build SV2 for Session MAC key, per AN12196:
 // SV2 = 3CC3 0001 0080 [UID (7B MSB)] [SDMReadCtr (3B LSB)]
 function buildSV2(uid: Uint8Array, cntDec: string): Uint8Array {
   if (uid.length !== 7) {
@@ -208,13 +199,13 @@ function buildSV2(uid: Uint8Array, cntDec: string): Uint8Array {
 
   const sv2 = new Uint8Array(16);
   sv2.set([0x3C, 0xC3, 0x00, 0x01, 0x00, 0x80], 0); // 6 bytes
-  sv2.set(uid, 6);          // positions 6..12 (7 bytes)
-  sv2.set(ctr, 13);         // positions 13..15 (3 bytes)
+  sv2.set(uid, 6);          // 7 bytes → positions 6..12
+  sv2.set(ctr, 13);         // 3 bytes → positions 13..15
 
   return sv2;
 }
 
-// Compute expected SUN signature (SDMMAC) for given id & cnt
+// Compute expected SUN / SDMMAC for given id & cnt
 // idHex: 14 hex chars (7-byte UID MSB)
 // cnt:   6-digit decimal string (e.g. "000001")
 async function computeExpectedSig(idHex: string, cnt: string): Promise<string> {
@@ -227,7 +218,6 @@ async function computeExpectedSig(idHex: string, cnt: string): Promise<string> {
 
   const uid = hexToBytes(idHex);
   const sv2 = buildSV2(uid, cnt);
-
   const K_SDM = hexToBytes(K_SDM_HEX);
 
   // 1) Session MAC key: KSesSDMFileReadMAC = CMAC(KSDMFileRead; SV2)
@@ -237,9 +227,7 @@ async function computeExpectedSig(idHex: string, cnt: string): Promise<string> {
   const cmacFull = await aesCmac(kSesMac, new Uint8Array([]));
 
   // 3) Truncate to 8 bytes (16 hex chars)
-  const sig = truncateMac(cmacFull);
-
-  return sig;
+  return truncateMac(cmacFull);
 }
 
 // -----------------------------------------------------------------------------
