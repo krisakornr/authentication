@@ -6,7 +6,7 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 
 // MODE: "json" → return JSON validation result
 //       "redirect" → HTTP redirect to valid/invalid URLs per product
-const MODE: "json" | "redirect" = "redirect"; // change to "redirect" for demo
+const MODE: "json" | "redirect" = "json"; // change to "redirect" for demo
 
 // Enable / disable replay protection
 const REPLAY_PROTECTION = true;
