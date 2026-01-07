@@ -11,7 +11,7 @@ const MODE: "json" | "redirect" = "redirect"; // change to "redirect" for demo
 // Enable / disable replay protection
 const REPLAY_PROTECTION = true;
 
-const API_VERSION = "sun-424-v7";
+const API_VERSION = "sun-424-v8";
 
 // SDMFileReadKey (Key0) – 16 bytes, AD repeated 16 times
 const K_SDM_HEX = "AD".repeat(16);
