@@ -11,7 +11,7 @@ const MODE: "json" | "redirect" = "redirect"; // change to "redirect" for demo
 // Enable / disable replay protection
 const REPLAY_PROTECTION = true;
 
-const API_VERSION = "sun-424-v8";
+const API_VERSION = "sun-424-v9";
 
 // SDMFileReadKey (Key0) – 16 bytes, AD repeated 16 times
 const K_SDM_HEX = "AD".repeat(16);
@@ -23,10 +23,10 @@ const PRODUCT_ROUTES: Record<string, { valid: string; invalid: string }> = {
     valid: "https://d.atma.to/pharmademo/PCJW8NWE63",
     //valid: "https://mm.group/",
     //invalid: "https://d.atma.to/pharmademo/GVDM4H9JE8",
-    invalid: "https://d.atma.to/pharmademo/GVDM4H9JE8",
+    invalid: "https://d.atma.to/pharmademo/BNCV8A4QZX",
   },
   "0002": {
-    valid: "https://d.atma.to/pharmademo/BNCV8A4QZX", // change if you want separate URLs
+    valid: "https://d.atma.to/pharmademo/GVDM4H9JE8", // change if you want separate URLs
     //valid: "https://mm.group/packaging/products/shaped-cartons/", // change if you want separate URLs
     invalid: "https://d.atma.to/pharmademo/QNCM49HTNV",
   },
