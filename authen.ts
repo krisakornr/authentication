@@ -30,6 +30,11 @@ const PRODUCT_ROUTES: Record<string, { valid: string; invalid: string }> = {
     //valid: "https://mm.group/packaging/products/shaped-cartons/", // change if you want separate URLs
     invalid: "https://d.atma.to/pharmademo/QNCM49HTNV",
   },
+"0003": {
+    valid: "https://d.atma.to/ozempic/081009786702", // change if you want separate URLs
+    invalid: "https://d.atma.to/ozempic/081009780701",
+  },
+   
 };
 
 // Fallback redirect if prod not recognized
